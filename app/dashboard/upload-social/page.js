@@ -9,33 +9,49 @@ export default function UploadSocial() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
   const [editingId, setEditingId] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null)
 
   const PLATFORMS = ['Instagram', 'LinkedIn']
 
-  // Form State - Added posted_date
+  // Form State
   const [formData, setFormData] = useState({
     brand_id: '',
     platform: 'Instagram',
-    posted_date: new Date().toISOString().split('T')[0], // Defaults to Today
+    posted_date: new Date().toISOString().split('T')[0],
     post_name: '',
     post_link: '',
     impressions_views: '',
     likes: '',
   })
 
-  // 1. Load Data
+  // 1. Load Data & User Permissions
   useEffect(() => {
-    fetchBrands()
-    fetchRecentPosts()
+    const checkUserAndFetch = async () => {
+      // Get User
+      const storedUser = localStorage.getItem('iqol_user')
+      const userObj = storedUser ? JSON.parse(storedUser) : null
+      setCurrentUser(userObj)
+
+      // Fetch All Brands
+      const { data: allBrands } = await supabase.from('brands').select('*')
+      
+      if (allBrands && userObj) {
+        // FILTER LOGIC
+        if (userObj.role === 'admin') {
+          setBrands(allBrands)
+        } else {
+          // Filter based on allowed_brands IDs
+          const allowed = allBrands.filter(b => userObj.allowed_brands?.includes(b.id.toString()))
+          setBrands(allowed)
+        }
+      }
+      
+      fetchRecentPosts()
+    }
+    checkUserAndFetch()
   }, [])
 
-  const fetchBrands = async () => {
-    const { data } = await supabase.from('brands').select('*')
-    if (data) setBrands(data)
-  }
-
   const fetchRecentPosts = async () => {
-    // Order by posted_date so newest posts show first
     const { data, error } = await supabase
       .from('social_posts')
       .select(`*, brands (name)`)
@@ -59,6 +75,12 @@ export default function UploadSocial() {
 
   // 3. Edit Mode
   const handleEdit = (item) => {
+    // Security Check
+    if (currentUser?.role !== 'admin' && !currentUser?.allowed_brands?.includes(item.brand_id.toString())) {
+      alert("You do not have permission to edit this brand's posts.")
+      return
+    }
+
     setEditingId(item.id)
     setFormData({
       brand_id: item.brand_id,
@@ -70,7 +92,7 @@ export default function UploadSocial() {
       likes: item.likes,
     })
     window.scrollTo({ top: 0, behavior: 'smooth' })
-    setMessage({ type: 'info', text: 'Editing post stats. Update values below.' })
+    setMessage({ type: 'info', text: 'Editing post stats.' })
   }
 
   const cancelEdit = () => {
@@ -88,7 +110,13 @@ export default function UploadSocial() {
   }
 
   // 4. Delete
-  const handleDelete = async (id) => {
+  const handleDelete = async (id, brandId) => {
+    // Security Check
+    if (currentUser?.role !== 'admin' && !currentUser?.allowed_brands?.includes(brandId.toString())) {
+      alert("You do not have permission to delete this post.")
+      return
+    }
+
     if (!confirm('Delete this post record?')) return
     const { error } = await supabase.from('social_posts').delete().eq('id', id)
     if (error) alert(error.message)
@@ -132,7 +160,6 @@ export default function UploadSocial() {
       fetchRecentPosts()
       if (editingId) cancelEdit()
       else {
-        // Reset inputs but keep Brand/Platform/Date for faster entry
         setFormData(prev => ({ 
           ...prev, 
           post_name: '', 
@@ -190,6 +217,7 @@ export default function UploadSocial() {
                   <option key={brand.id} value={brand.id}>{brand.name}</option>
                 ))}
               </select>
+              {brands.length === 0 && <p className="text-xs text-red-500 mt-1">No brands assigned.</p>}
             </div>
 
             <div>
@@ -261,7 +289,6 @@ export default function UploadSocial() {
             </div>
           </div>
 
-          {/* Buttons */}
           <div className="flex items-center gap-4 pt-2">
             <button
               type="submit"
@@ -274,7 +301,7 @@ export default function UploadSocial() {
               {loading ? 'Saving...' : editingId ? 'Update Post' : 'Save Post Stats'}
             </button>
             {editingId && (
-              <button type="button" onClick={cancelEdit} className="px-6 py-4 rounded-md bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">
+              <button type="button" onClick={cancelEdit} className="px-6 py-4 rounded-md bg-gray-200 text-gray-700 font-bold hover:bg-gray-300 transition">
                 Cancel
               </button>
             )}
@@ -286,7 +313,7 @@ export default function UploadSocial() {
       <div className="bg-white shadow-lg rounded-lg overflow-hidden border border-gray-100">
         <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
           <h2 className="text-lg font-semibold text-gray-700">Recent Posts Tracker</h2>
-          <span className="text-xs text-gray-400 italic">Scroll →</span>
+          <span className="text-xs text-gray-400 italic">Scroll horizontally →</span>
         </div>
         
         <div className="overflow-x-auto">
@@ -303,38 +330,34 @@ export default function UploadSocial() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {recentPosts.length === 0 ? (
-                <tr><td colSpan="7" className="px-6 py-8 text-center text-gray-400">No posts tracked yet.</td></tr>
-              ) : (
-                recentPosts.map((item) => (
-                  <tr key={item.id} className={`hover:bg-gray-50 transition ${editingId === item.id ? 'bg-blue-50' : ''}`}>
-                    <td className="px-6 py-4 font-medium">{item.posted_date}</td>
-                    <td className="px-6 py-4 font-bold text-[#113a3a]">{item.brands?.name || 'Unknown'}</td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2 py-1 rounded text-xs font-bold ${
-                        item.platform === 'LinkedIn' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'
-                      }`}>
-                        {item.platform}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 max-w-[200px] truncate">
-                      {item.post_link ? (
-                         <a href={item.post_link} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline font-medium">
-                           {item.post_name || 'Link'}
-                         </a>
-                      ) : (
-                        <span className="text-gray-500">{item.post_name || '-'}</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 bg-blue-50/50 font-mono">{item.impressions_views?.toLocaleString()}</td>
-                    <td className="px-6 py-4 bg-pink-50/50 font-mono">{item.likes?.toLocaleString()}</td>
-                    <td className="px-6 py-4 text-right space-x-3">
-                      <button onClick={() => handleEdit(item)} className="text-blue-600 hover:text-blue-900 font-medium underline">Edit</button>
-                      <button onClick={() => handleDelete(item.id)} className="text-red-500 hover:text-red-700 font-medium hover:underline">Delete</button>
-                    </td>
-                  </tr>
-                ))
-              )}
+              {recentPosts.map((item) => (
+                <tr key={item.id} className={`hover:bg-gray-50 transition ${editingId === item.id ? 'bg-blue-50' : ''}`}>
+                  <td className="px-6 py-4 font-medium">{item.posted_date}</td>
+                  <td className="px-6 py-4 font-bold text-[#113a3a]">{item.brands?.name || 'Unknown'}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded text-xs font-bold ${
+                      item.platform === 'LinkedIn' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'
+                    }`}>
+                      {item.platform}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 max-w-[200px] truncate">
+                    {item.post_link ? (
+                       <a href={item.post_link} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline font-medium">
+                         {item.post_name || 'Link'}
+                       </a>
+                    ) : (
+                      <span className="text-gray-500">{item.post_name || '-'}</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 bg-blue-50/50 font-mono">{item.impressions_views?.toLocaleString()}</td>
+                  <td className="px-6 py-4 bg-pink-50/50 font-mono">{item.likes?.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right space-x-3">
+                    <button onClick={() => handleEdit(item)} className="text-blue-600 hover:text-blue-900 font-medium underline">Edit</button>
+                    <button onClick={() => handleDelete(item.id, item.brand_id)} className="text-red-500 hover:text-red-700 font-medium hover:underline">Delete</button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
