@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabaseClient'
 
 export default function DashboardHome() {
   const [brands, setBrands] = useState([])
-  const [metricsStats, setMetricsStats] = useState({}) // Stores current values AND % changes
+  const [metricsStats, setMetricsStats] = useState({})
   const [blogs, setBlogs] = useState({})
   const [posts, setPosts] = useState({})
   const [loading, setLoading] = useState(true)
@@ -21,9 +21,8 @@ export default function DashboardHome() {
     fetchData()
   }, [])
 
-  // Helper to calculate % change
   const getChange = (current, previous) => {
-    if (!previous) return 0; // Avoid division by zero
+    if (!previous) return 0;
     if (current === previous) return 0;
     return Math.round(((current - previous) / previous) * 100);
   }
@@ -39,30 +38,24 @@ export default function DashboardHome() {
     })) || []
     setBrands(mergedBrands)
 
-    // 2. Metrics (Current vs Previous)
+    // 2. Metrics
     const { data: allMetrics } = await supabase
       .from('daily_metrics')
       .select('*')
-      .order('date', { ascending: false }) // Newest first
+      .order('date', { ascending: false })
 
     const statsMap = {}
-    
     mergedBrands.forEach(brand => {
-      // Get all metrics for this specific brand
       const brandMetrics = allMetrics?.filter(m => m.brand_id === brand.id) || []
-      
-      const current = brandMetrics[0] || {}   // Today
-      const previous = brandMetrics[1] || {}  // Yesterday (or last entry)
+      const current = brandMetrics[0] || {}
+      const previous = brandMetrics[1] || {}
 
       statsMap[brand.id] = {
-        // Current Values
         website_visits: current.website_visits || 0,
         linkedin_impressions: current.linkedin_impressions || 0,
         linkedin_followers: current.linkedin_followers || 0,
         instagram_views: current.instagram_views || 0,
         instagram_followers: current.instagram_followers || 0,
-        
-        // Calculated % Changes
         website_change: getChange(current.website_visits, previous.website_visits),
         linkedin_imp_change: getChange(current.linkedin_impressions, previous.linkedin_impressions),
         linkedin_fol_change: getChange(current.linkedin_followers, previous.linkedin_followers),
@@ -93,6 +86,21 @@ export default function DashboardHome() {
     setLoading(false)
   }
 
+  // --- HELPER FOR BADGE ---
+  const getHealthBadge = (score) => {
+    if (score === null || score === undefined) return <span className="text-gray-300 text-xs">-</span>
+    let colorClass = '', label = ''
+    if (score <= 20) { colorClass = 'bg-green-100 text-green-700'; label = 'Healthy' }
+    else if (score <= 50) { colorClass = 'bg-orange-100 text-orange-700'; label = 'Moderate' }
+    else { colorClass = 'bg-red-100 text-red-700'; label = 'High AI' }
+    
+    return (
+      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${colorClass}`}>
+        {label} {score}%
+      </span>
+    )
+  }
+
   // --- COMPONENTS ---
 
   const MetricCard = ({ brand, value, change }) => {
@@ -105,7 +113,6 @@ export default function DashboardHome() {
           </div>
           <span className="text-[10px] font-medium border border-slate-200 rounded-md px-2 py-1 text-slate-400 bg-slate-50">Latest</span>
         </div>
-        
         <div className="text-center mt-4 pb-1">
           <div className="text-3xl font-bold text-slate-800 tracking-tight">
             {value ? value.toLocaleString() : '0'}
@@ -126,9 +133,7 @@ export default function DashboardHome() {
         </div>
         <span className="text-[10px] font-medium border border-slate-200 rounded px-2 py-1 text-slate-400 bg-slate-50">Current</span>
       </div>
-      
       <div className="space-y-3">
-        {/* Row 1 */}
         <div className="flex justify-between items-center text-sm border-b border-dashed border-slate-100 pb-2">
           <span className="text-slate-500 text-xs font-medium uppercase">{label1}</span>
           <div className="flex items-center gap-2">
@@ -138,7 +143,6 @@ export default function DashboardHome() {
             </span>
           </div>
         </div>
-        {/* Row 2 */}
         <div className="flex justify-between items-center text-sm pt-1">
           <span className="text-slate-500 text-xs font-medium uppercase">{label2}</span>
           <div className="flex items-center gap-2">
@@ -178,6 +182,8 @@ export default function DashboardHome() {
                   <>
                     <td className="px-5 py-3.5 font-medium text-slate-700 truncate max-w-[200px]">{row.title}</td>
                     <td className="px-5 py-3.5 text-right text-slate-600 font-mono">{row.views?.toLocaleString()}</td>
+                    {/* NEW: Health Badge */}
+                    <td className="px-5 py-3.5 text-right">{getHealthBadge(row.ai_detection_score)}</td>
                   </>
                 ) : (
                   <>
@@ -198,66 +204,39 @@ export default function DashboardHome() {
 
   return (
     <div className="space-y-10 pb-12">
-      {/* Header */}
       <div className="flex flex-col items-center justify-center py-6">
         <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">IQOL Marketing Dashboard</h2>
-  
+        <p className="text-slate-400 text-sm mt-1">Real-time content & performance tracking</p>
       </div>
 
-      {/* 1. Website Visits (Dynamic) */}
       <section>
         <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-widest border-b border-slate-200 pb-2">Website Visits (Today)</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {brands.map((b) => (
-            <MetricCard 
-              key={b.id} 
-              brand={b} 
-              value={metricsStats[b.id]?.website_visits} 
-              change={metricsStats[b.id]?.website_change}
-            />
+            <MetricCard key={b.id} brand={b} value={metricsStats[b.id]?.website_visits} change={metricsStats[b.id]?.website_change} />
           ))}
         </div>
       </section>
 
-      {/* 2. LinkedIn Overview (Dynamic) */}
       <section>
         <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-widest border-b border-slate-200 pb-2">LinkedIn Overview</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {brands.map((b) => (
-            <SocialCard 
-              key={b.id} 
-              brand={b} 
-              label1="Impressions" 
-              val1={metricsStats[b.id]?.linkedin_impressions} 
-              change1={metricsStats[b.id]?.linkedin_imp_change}
-              label2="Followers" 
-              val2={metricsStats[b.id]?.linkedin_followers} 
-              change2={metricsStats[b.id]?.linkedin_fol_change}
-            />
+            <SocialCard key={b.id} brand={b} label1="Impressions" val1={metricsStats[b.id]?.linkedin_impressions} change1={metricsStats[b.id]?.linkedin_imp_change} label2="Followers" val2={metricsStats[b.id]?.linkedin_followers} change2={metricsStats[b.id]?.linkedin_fol_change} />
           ))}
         </div>
       </section>
 
-      {/* 3. Instagram Overview (Dynamic) */}
       <section>
         <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-widest border-b border-slate-200 pb-2">Instagram Overview</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {brands.map((b) => (
-            <SocialCard 
-              key={b.id} 
-              brand={b} 
-              label1="Profile Views" 
-              val1={metricsStats[b.id]?.instagram_views} 
-              change1={metricsStats[b.id]?.insta_view_change}
-              label2="Followers" 
-              val2={metricsStats[b.id]?.instagram_followers} 
-              change2={metricsStats[b.id]?.insta_fol_change}
-            />
+            <SocialCard key={b.id} brand={b} label1="Profile Views" val1={metricsStats[b.id]?.instagram_views} change1={metricsStats[b.id]?.insta_view_change} label2="Followers" val2={metricsStats[b.id]?.instagram_followers} change2={metricsStats[b.id]?.insta_fol_change} />
           ))}
         </div>
       </section>
 
-      {/* 4. Blogs (Top 5) */}
+      {/* UPDATED BLOG SECTION WITH HEALTH BADGE */}
       <section>
         <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-widest border-b border-slate-200 pb-2">Top Performing Blogs</h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -266,7 +245,8 @@ export default function DashboardHome() {
                key={b.id} 
                brand={b} 
                title="Most Viewed Blogs" 
-               columns={['Title', 'Visits']} 
+               // Added "Health" to columns
+               columns={['Title', 'Visits', 'Health']} 
                data={blogs[b.id]} 
                type="blog"
              />
@@ -274,7 +254,6 @@ export default function DashboardHome() {
         </div>
       </section>
 
-      {/* 5. Social Content (Top 5) */}
       <section>
         <h3 className="text-sm font-bold text-slate-400 mb-4 uppercase tracking-widest border-b border-slate-200 pb-2">Top Social Content</h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
