@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-// Using the correct relative path to root
 import { supabase } from '../../../lib/supabaseClient'
 
 export default function UploadMetrics() {
@@ -10,8 +9,8 @@ export default function UploadMetrics() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
   
-  // New state to track if we are editing a specific row
   const [editingId, setEditingId] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null)
 
   // Form State
   const [formData, setFormData] = useState({
@@ -24,23 +23,43 @@ export default function UploadMetrics() {
     instagram_followers: '',
   })
 
-  // 1. Load Data
+  // 1. Load Data & User Permissions
   useEffect(() => {
-    fetchBrands()
-    fetchRecentMetrics()
-  }, [])
+    const checkUserAndFetch = async () => {
+      // Get User
+      const storedUser = localStorage.getItem('iqol_user')
+      const userObj = storedUser ? JSON.parse(storedUser) : null
+      setCurrentUser(userObj)
 
-  const fetchBrands = async () => {
-    const { data } = await supabase.from('brands').select('*')
-    if (data) setBrands(data)
-  }
+      // Fetch All Brands
+      const { data: allBrands } = await supabase.from('brands').select('*')
+      
+      if (allBrands && userObj) {
+        // FILTER LOGIC:
+        // If Admin -> Show All
+        // If User -> Show only allowed_brands
+        if (userObj.role === 'admin') {
+          setBrands(allBrands)
+        } else {
+          // allowed_brands is an array of strings like ['1', '2']
+          // We filter brands where the ID matches that list
+          const allowed = allBrands.filter(b => userObj.allowed_brands?.includes(b.id.toString()))
+          setBrands(allowed)
+        }
+      }
+      
+      fetchRecentMetrics()
+    }
+
+    checkUserAndFetch()
+  }, [])
 
   const fetchRecentMetrics = async () => {
     const { data, error } = await supabase
       .from('daily_metrics')
       .select(`*, brands (name)`)
-      .order('created_at', { ascending: false }) // Show newest first
-      .limit(20) // Increased limit to 20
+      .order('created_at', { ascending: false }) 
+      .limit(20)
 
     if (data) setRecentMetrics(data)
     if (error) console.error('Error fetching metrics:', error)
@@ -57,8 +76,14 @@ export default function UploadMetrics() {
     }
   }
 
-  // 3. Load a Row into the Form for Editing
+  // 3. Edit Mode
   const handleEdit = (item) => {
+    // Security: Prevent editing if user doesn't have access to this brand
+    if (currentUser?.role !== 'admin' && !currentUser?.allowed_brands?.includes(item.brand_id.toString())) {
+      alert("You do not have permission to edit this brand's data.")
+      return
+    }
+
     setEditingId(item.id)
     setFormData({
       brand_id: item.brand_id,
@@ -69,9 +94,8 @@ export default function UploadMetrics() {
       instagram_views: item.instagram_views,
       instagram_followers: item.instagram_followers,
     })
-    // Scroll to top so user sees the form
     window.scrollTo({ top: 0, behavior: 'smooth' })
-    setMessage({ type: 'info', text: `Editing entry for ${item.date}. Change values and click Update.` })
+    setMessage({ type: 'info', text: `Editing entry for ${item.date}.` })
   }
 
   const cancelEdit = () => {
@@ -88,22 +112,24 @@ export default function UploadMetrics() {
     setMessage({ type: '', text: '' })
   }
 
-  // 4. Delete Row
-  const handleDelete = async (id) => {
+  // 4. Delete
+  const handleDelete = async (id, brandId) => {
+    // Security check
+    if (currentUser?.role !== 'admin' && !currentUser?.allowed_brands?.includes(brandId.toString())) {
+      alert("You do not have permission to delete this data.")
+      return
+    }
+
     if (!confirm('Are you sure you want to delete this entry?')) return
-
     const { error } = await supabase.from('daily_metrics').delete().eq('id', id)
-
-    if (error) {
-      alert('Error deleting: ' + error.message)
-    } else {
+    if (error) alert('Error deleting: ' + error.message)
+    else {
       fetchRecentMetrics()
-      // If we deleted the item currently being edited, cancel edit mode
       if (editingId === id) cancelEdit()
     }
   }
 
-  // 5. Submit (Handles both INSERT and UPDATE)
+  // 5. Submit
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
@@ -115,7 +141,6 @@ export default function UploadMetrics() {
       return
     }
 
-    // Convert empty strings to 0 for DB
     const payload = {
       ...formData,
       website_visits: formData.website_visits || 0,
@@ -126,19 +151,11 @@ export default function UploadMetrics() {
     }
 
     let error;
-
     if (editingId) {
-      // UPDATE existing row
-      const response = await supabase
-        .from('daily_metrics')
-        .update(payload)
-        .eq('id', editingId)
+      const response = await supabase.from('daily_metrics').update(payload).eq('id', editingId)
       error = response.error
     } else {
-      // INSERT new row
-      const response = await supabase
-        .from('daily_metrics')
-        .insert([payload])
+      const response = await supabase.from('daily_metrics').insert([payload])
       error = response.error
     }
 
@@ -147,9 +164,8 @@ export default function UploadMetrics() {
     } else {
       setMessage({ type: 'success', text: editingId ? 'Entry updated!' : 'Metrics added successfully!' })
       fetchRecentMetrics()
-      if (editingId) cancelEdit() // Exit edit mode
+      if (editingId) cancelEdit()
       else {
-        // Reset form (keep date/brand?) - defaulting to clear
         setFormData(prev => ({
           ...prev,
           website_visits: '',
@@ -169,9 +185,8 @@ export default function UploadMetrics() {
         {editingId ? 'Edit Daily Metrics' : 'Upload Daily Metrics'}
       </h1>
 
-      {/* --- FORM SECTION --- */}
+      {/* --- FORM --- */}
       <div className={`bg-white shadow-lg rounded-lg p-8 border mb-12 transition-all duration-300 ${editingId ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-100'}`}>
-        
         {message.text && (
           <div className={`p-4 mb-6 rounded-md ${
             message.type === 'error' ? 'bg-red-50 text-red-700' : 
@@ -196,6 +211,9 @@ export default function UploadMetrics() {
                   <option key={brand.id} value={brand.id}>{brand.name}</option>
                 ))}
               </select>
+              {brands.length === 0 && (
+                <p className="text-xs text-red-500 mt-1">No brands assigned to your account.</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
@@ -211,7 +229,7 @@ export default function UploadMetrics() {
 
           <div className="border-t border-gray-100 my-4"></div>
 
-          {/* Metric Inputs */}
+          {/* Metrics Inputs */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Web Visits</label>
@@ -240,7 +258,6 @@ export default function UploadMetrics() {
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div className="flex items-center gap-4">
             <button
               type="submit"
@@ -252,13 +269,8 @@ export default function UploadMetrics() {
             >
               {loading ? 'Saving...' : editingId ? 'Update Entry' : 'Save Metrics'}
             </button>
-            
             {editingId && (
-              <button
-                type="button"
-                onClick={cancelEdit}
-                className="px-6 py-4 rounded-md bg-gray-200 text-gray-700 font-bold hover:bg-gray-300 transition"
-              >
+              <button type="button" onClick={cancelEdit} className="px-6 py-4 rounded-md bg-gray-200 text-gray-700 font-bold hover:bg-gray-300 transition">
                 Cancel
               </button>
             )}
@@ -266,11 +278,11 @@ export default function UploadMetrics() {
         </form>
       </div>
 
-      {/* --- SCROLLABLE TABLE --- */}
+      {/* --- TABLE --- */}
       <div className="bg-white shadow-lg rounded-lg overflow-hidden border border-gray-100">
         <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
           <h2 className="text-lg font-semibold text-gray-700">Recent Entries Database</h2>
-          <span className="text-xs text-gray-400 italic">Scroll horizontally to see all data →</span>
+          <span className="text-xs text-gray-400 italic">Scroll horizontally →</span>
         </div>
         
         <div className="overflow-x-auto">
@@ -288,42 +300,25 @@ export default function UploadMetrics() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {recentMetrics.length === 0 ? (
-                <tr><td colSpan="8" className="px-6 py-8 text-center text-gray-400">No data found yet. Add some above!</td></tr>
-              ) : (
-                recentMetrics.map((item) => (
-                  <tr key={item.id} className={`hover:bg-gray-50 transition ${editingId === item.id ? 'bg-blue-50' : ''}`}>
-                    <td className="px-6 py-4 font-medium text-gray-900">{item.date}</td>
-                    <td className="px-6 py-4 font-bold text-[#113a3a]">
-                      {item.brands?.name || 'Unknown'}
-                    </td>
-                    <td className="px-6 py-4">{item.website_visits}</td>
-                    <td className="px-6 py-4 bg-blue-50/50">{item.linkedin_impressions}</td>
-                    <td className="px-6 py-4 bg-blue-50/50">{item.linkedin_followers}</td>
-                    <td className="px-6 py-4 bg-pink-50/50">{item.instagram_views}</td>
-                    <td className="px-6 py-4 bg-pink-50/50">{item.instagram_followers}</td>
-                    <td className="px-6 py-4 text-right space-x-3">
-                      <button 
-                        onClick={() => handleEdit(item)}
-                        className="text-blue-600 hover:text-blue-900 font-medium underline decoration-blue-200 hover:decoration-blue-900"
-                      >
-                        Edit
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(item.id)}
-                        className="text-red-500 hover:text-red-700 font-medium hover:underline"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
+              {recentMetrics.map((item) => (
+                <tr key={item.id} className={`hover:bg-gray-50 transition ${editingId === item.id ? 'bg-blue-50' : ''}`}>
+                  <td className="px-6 py-4 font-medium text-gray-900">{item.date}</td>
+                  <td className="px-6 py-4 font-bold text-[#113a3a]">{item.brands?.name || 'Unknown'}</td>
+                  <td className="px-6 py-4">{item.website_visits}</td>
+                  <td className="px-6 py-4 bg-blue-50/50">{item.linkedin_impressions}</td>
+                  <td className="px-6 py-4 bg-blue-50/50">{item.linkedin_followers}</td>
+                  <td className="px-6 py-4 bg-pink-50/50">{item.instagram_views}</td>
+                  <td className="px-6 py-4 bg-pink-50/50">{item.instagram_followers}</td>
+                  <td className="px-6 py-4 text-right space-x-3">
+                    <button onClick={() => handleEdit(item)} className="text-blue-600 hover:text-blue-900 font-medium underline">Edit</button>
+                    <button onClick={() => handleDelete(item.id, item.brand_id)} className="text-red-500 hover:text-red-700 font-medium hover:underline">Delete</button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </div>
-      
     </div>
   )
 }
